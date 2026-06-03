@@ -406,7 +406,7 @@ static void rand_bytes(uint8_t *buf, size_t n) {
 #else
 static void rand_bytes(uint8_t *buf, size_t n) {
     FILE *f = fopen("/dev/urandom", "rb");
-    if (f) { fread(buf, 1, n, f); fclose(f); }
+    if (f) { if (fread(buf, 1, n, f) != n) { for (size_t i=0; i<n; i++) buf[i]=(uint8_t)(rand()&0xFF); } fclose(f); }
     else { for (size_t i=0; i<n; i++) buf[i] = (uint8_t)(rand() & 0xFF); }
 }
 #endif
@@ -558,29 +558,35 @@ static int nc_send(NC_CLIENT *cl, const uint8_t *data, int dlen,
 static int nc_recv(NC_CLIENT *cl, uint8_t *data,
                    uint16_t *sid, uint16_t *mid, uint16_t *caid)
 {
-    uint8_t lenbuf[2], *buf = cl->recv_buf;
-    if (recv_all(cl->fd, lenbuf, 2) != 2) return -1;
-    uint16_t total_len = (uint16_t)((lenbuf[0] << 8) | lenbuf[1]);
-    if (!total_len || total_len > NC_MSG_MAX) return -1;
-    if (recv_all(cl->fd, buf, total_len) != (int)total_len) return -1;
-    if (total_len < 8) return -1;
-    uint16_t payload_len = total_len-8;
-    uint8_t iv[8], key16[16];
-    memcpy(iv, buf+payload_len, 8);
-    memcpy(key16,     cl->key1, 8);
-    memcpy(key16+8,   cl->key2, 8);
-    ede2_cbc_dec(key16, iv, buf, buf, payload_len);
-    memset(key16, 0, 16);
-    if (nc_xor(buf, payload_len)) return -1;
-    *mid  = (uint16_t)((buf[0] << 8) | buf[1]);
-    *sid  = (uint16_t)((buf[2] << 8) | buf[3]);
-    *caid = (uint16_t)((buf[4] << 8) | buf[5]);
-    if (payload_len < (uint16_t)(NC_HDR_LEN_524+5)) return -1;
-    uint32_t rlen = (uint32_t)((((buf[3+NC_HDR_LEN_524] & 0x0F) << 8) |
-                                  buf[4+NC_HDR_LEN_524]) + 3);
-    if (rlen+2+NC_HDR_LEN_524 > (uint32_t)payload_len) return -1;
-    memcpy(data, buf+2+NC_HDR_LEN_524, rlen);
-    return (int)rlen;
+    /* loop: skip MSG_ADDCARD (0xD3) and admin messages sent by TCMG after CARD_DATA */
+    for (;;) {
+        uint8_t lenbuf[2], *buf = cl->recv_buf;
+        if (recv_all(cl->fd, lenbuf, 2) != 2) return -1;
+        uint16_t total_len = (uint16_t)((lenbuf[0] << 8) | lenbuf[1]);
+        if (!total_len || total_len > NC_MSG_MAX) return -1;
+        if (recv_all(cl->fd, buf, total_len) != (int)total_len) return -1;
+        if (total_len < 8) return -1;
+        uint16_t payload_len = total_len-8;
+        uint8_t iv[8], key16[16];
+        memcpy(iv, buf+payload_len, 8);
+        memcpy(key16,     cl->key1, 8);
+        memcpy(key16+8,   cl->key2, 8);
+        ede2_cbc_dec(key16, iv, buf, buf, payload_len);
+        memset(key16, 0, 16);
+        if (nc_xor(buf, payload_len)) return -1;
+        *mid  = (uint16_t)((buf[0] << 8) | buf[1]);
+        *sid  = (uint16_t)((buf[2] << 8) | buf[3]);
+        *caid = (uint16_t)((buf[4] << 8) | buf[5]);
+        if (payload_len < (uint16_t)(NC_HDR_LEN_524+5)) return -1;
+        uint32_t rlen = (uint32_t)((((buf[3+NC_HDR_LEN_524] & 0x0F) << 8) |
+                                      buf[4+NC_HDR_LEN_524]) + 3);
+        if (rlen+2+NC_HDR_LEN_524 > (uint32_t)payload_len) return -1;
+        memcpy(data, buf+2+NC_HDR_LEN_524, rlen);
+        /* ignore MSG_ADDCARD (0xD3) and MSG_KEEPALIVE_EXTENDED (0xD6) */
+        if (rlen >= 1 && (data[0] == 0xD3 || data[0] == 0xD6))
+            continue;
+        return (int)rlen;
+    }
 }
 
 static sock_t connect_server(const char *host, int port) {
@@ -1038,7 +1044,6 @@ static THREAD_RET NetworkThread(THREAD_ARG lpParam) {
         }
     }
 
-done:
     AppendLog("--- Stop ---");
     AppendLog("  Total: %d OK  |  %d NOK  |  (%d sent)", cw_ok, cw_fail, ecm_num);
     if (cw_ok > 0)
