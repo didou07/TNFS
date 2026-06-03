@@ -50,7 +50,7 @@
 #define MSG_ECM_0            0x80
 #define MSG_ECM_1            0x81
 
-#define CONF_FILE "server.conf"
+#define CONF_FILE "tnfs.conf"
 
 static const int IP[64]  = {58,50,42,34,26,18,10,2,60,52,44,36,28,20,12,4,62,54,46,38,30,22,14,6,64,56,48,40,32,24,16,8,57,49,41,33,25,17,9,1,59,51,43,35,27,19,11,3,61,53,45,37,29,21,13,5,63,55,47,39,31,23,15,7};
 static const int FP[64]  = {40,8,48,16,56,24,64,32,39,7,47,15,55,23,63,31,38,6,46,14,54,22,62,30,37,5,45,13,53,21,61,29,36,4,44,12,52,20,60,28,35,3,43,11,51,19,59,27,34,2,42,10,50,18,58,26,33,1,41,9,49,17,57,25};
@@ -945,28 +945,18 @@ static THREAD_RET NetworkThread(THREAD_ARG lpParam) {
     uint8_t prev_cw[8] = {0};
 
     {
-        uint8_t cw_e[8], cw_o[8], ecm_wp[128], wr[NC_MSG_MAX];
-        int     ecm_wl = 0;
-        uint16_t ws, wm, wc;
-        uint8_t ts = MSG_ECM_0;
-        for (int t = 0; t < 2; t++, ts = MSG_ECM_1) {
-            uint8_t ncw[8];
-            rand_bytes(ncw, 8);
-            if (ts == MSG_ECM_0) {
-                memcpy(cw_e, ncw,    8);
-                memcpy(cw_o, prev_cw, 8);
-            } else {
-                memcpy(cw_e, prev_cw, 8);
-                memcpy(cw_o, ncw,    8);
-            }
-            memcpy(prev_cw, ncw, 8);
-            memset(ncw, 0, 8);
-            build_ecm(ecm_wp, &ecm_wl, cw_e, cw_o, ts, master_key);
-            memset(cw_e, 0, 8); memset(cw_o, 0, 8);
-            if (nc_send(cl, ecm_wp, ecm_wl, sid, caid, provid) < 0) goto done;
+        uint8_t ncw[8], cw_e[8], cw_o[8], ep[128], wr[NC_MSG_MAX];
+        int el = 0; uint16_t ws, wm, wc;
+        rand_bytes(ncw, 8);
+        memcpy(cw_e, ncw, 8); memset(cw_o, 0, 8);
+        build_ecm(ep, &el, cw_e, cw_o, MSG_ECM_0, master_key);
+        if (nc_send(cl, ep, el, sid, caid, provid) >= 0) {
             cl->mid++;
             nc_recv(cl, wr, &ws, &wm, &wc);
+            memcpy(prev_cw, ncw, 8);
+            table_state = MSG_ECM_1;
         }
+        memset(ncw, 0, 8); memset(cw_e, 0, 8);
     }
 
     for (;;) {
@@ -990,6 +980,10 @@ static THREAD_RET NetworkThread(THREAD_ARG lpParam) {
             memcpy(cw_odd,  new_cw,   8);
         }
         memcpy(prev_cw, new_cw, 8);
+
+        char hex_cw_even[17], hex_cw_odd[17];
+        bytes_to_hex(hex_cw_even, cw_even, 8);
+        bytes_to_hex(hex_cw_odd,  cw_odd,  8);
 
         uint8_t ecm_payload[128];
         int     ecm_len = 0;
@@ -1016,15 +1010,8 @@ static THREAD_RET NetworkThread(THREAD_ARG lpParam) {
 
         if (rlen >= 3 && (resp[0] == MSG_ECM_0 || resp[0] == MSG_ECM_1)) {
             if ((resp[2] & CW_PRESENT_FLAG) && rlen >= (int)(3+CW_LEN)) {
-                char caid_str[8], sid_str[8];
-                snprintf(caid_str, sizeof(caid_str), "%04X", caid);
-                snprintf(sid_str,  sizeof(sid_str),  "%04X", sid);
-                uint8_t *cw = resp + 3;
-                char hex_cw_even[17], hex_cw_odd[17];
-                bytes_to_hex(hex_cw_even, cw,   8);
-                bytes_to_hex(hex_cw_odd,  cw+8, 8);
-                AppendLog("(cw) [hit]  %s:%s:%02X  [%02X]  %s %s  %ldms  %s",
-                    caid_str, sid_str, table_state, ecm_len,
+                AppendLog("(cw) [hit]  %04X:%04X:%02X  [%02X]  %s %s  %ldms  %s",
+                    caid, sid, table_state, ecm_len,
                     hex_cw_even, hex_cw_odd, ms, tp->user);
                 cw_ok++;
             } else {
