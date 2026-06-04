@@ -344,6 +344,7 @@ static bool md5_crypt(const char *pw, const char *salt_str, char *out, size_t ou
     size_t pw_len = strlen(pw);
     uint8_t *tmp  = (uint8_t *)malloc(pw_len*2+128);
     uint8_t *atmp = (uint8_t *)malloc(pw_len*2+32);
+    if (!tmp || !atmp) { free(tmp); free(atmp); return false; }
     uint8_t alt[16], fh[16];
     size_t pos=0, apos=0;
     memcpy(tmp+pos,  pw,    pw_len); pos  += pw_len;
@@ -558,8 +559,7 @@ static int nc_send(NC_CLIENT *cl, const uint8_t *data, int dlen,
 static int nc_recv(NC_CLIENT *cl, uint8_t *data,
                    uint16_t *sid, uint16_t *mid, uint16_t *caid)
 {
-    /* loop: skip MSG_ADDCARD (0xD3) and admin messages sent by TCMG after CARD_DATA */
-    for (;;) {
+    for (int _try = 0; _try < 32; _try++) {
         uint8_t lenbuf[2], *buf = cl->recv_buf;
         if (recv_all(cl->fd, lenbuf, 2) != 2) return -1;
         uint16_t total_len = (uint16_t)((lenbuf[0] << 8) | lenbuf[1]);
@@ -582,11 +582,11 @@ static int nc_recv(NC_CLIENT *cl, uint8_t *data,
                                       buf[4+NC_HDR_LEN_524]) + 3);
         if (rlen+2+NC_HDR_LEN_524 > (uint32_t)payload_len) return -1;
         memcpy(data, buf+2+NC_HDR_LEN_524, rlen);
-        /* ignore MSG_ADDCARD (0xD3) and MSG_KEEPALIVE_EXTENDED (0xD6) */
         if (rlen >= 1 && (data[0] == 0xD3 || data[0] == 0xD6))
             continue;
         return (int)rlen;
     }
+    return -1;
 }
 
 static sock_t connect_server(const char *host, int port) {
@@ -770,7 +770,9 @@ static void AppendLog(const char *fmt, ...) {
     va_end(ap);
     snprintf(full, sizeof(full), "%s %s\n", ts, msg);
     LogMsg *lm = (LogMsg *)malloc(sizeof(LogMsg));
+    if (!lm) return;
     lm->text = strdup(full);
+    if (!lm->text) { free(lm); return; }
     g_idle_add(append_log_idle, lm);
 }
 #endif
@@ -1052,6 +1054,8 @@ static THREAD_RET NetworkThread(THREAD_ARG lpParam) {
         AppendLog("server not providing CW -- check CAID/ProvID/keys");
 
     sock_close(fd);
+    memset(master_key, 0, 32);
+    memset(g_master_key, 0, 32);
     g_connected = false;
     g_nc_client = NULL;
     free(cl);
@@ -1137,44 +1141,63 @@ static void gui_save_conf(HWND hWnd) {
 static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_CREATE: {
-        int y = 10;
+        int lw = 72;
+        int fw = 290;
+        int sw = 90;
+        int nw = 72;
+        int x0 = 8;
+        int rh = 24;
+        int rs = 26;
+        int y  = 10;
 
-        CreateLabel(hWnd, "Host:",   8,   y+3, 36, 18);
-        CreateEdit(hWnd,  IDC_EDIT_HOST, "127.0.0.1", 48,  y, 150, 22, 0);
-        CreateLabel(hWnd, "Port:",   208, y+3, 32, 18);
-        CreateEdit(hWnd,  IDC_EDIT_PORT, "15050",     244, y,  58, 22, 0);
-        CreateLabel(hWnd, "User:",   312, y+3, 32, 18);
-        CreateEdit(hWnd,  IDC_EDIT_USER, "tvcas",     348, y,  90, 22, 0);
-        CreateLabel(hWnd, "Pass:",   448, y+3, 32, 18);
-        CreateEdit(hWnd,  IDC_EDIT_PASS, "1234",      484, y,  90, 22, 0);
-        CreateLabel(hWnd, "Interval(s):", 586, y+3, 76, 18);
-        CreateEdit(hWnd,  IDC_EDIT_INTERVAL, "10",    666, y,  44, 22, 0);
-        y += 30;
+        int xL1 = x0;
+        int xF1 = xL1 + lw + 4;
+        int xL2 = xF1 + fw + 8;
+        int xF2 = xL2 + sw + 4;
+        int xL3 = xF2 + sw + 8;
+        int xF3 = xL3 + nw + 4;
 
-        CreateLabel(hWnd, "DES Key:", 8, y+3, 130, 18);
-        CreateEdit(hWnd, IDC_EDIT_DESKEY, "0102030405060708091011121314", 142, y, 250, 22, 0);
-        CreateLabel(hWnd, "CAID:",  402, y+3, 36, 18);
-        CreateEdit(hWnd, IDC_EDIT_CAID,   "0B00",    442, y,  58, 22, 0);
-        CreateLabel(hWnd, "SID:",   510, y+3, 28, 18);
-        CreateEdit(hWnd, IDC_EDIT_SID,    "0001",    542, y,  58, 22, 0);
-        CreateLabel(hWnd, "ProvID:", 610, y+3, 48, 18);
-        CreateEdit(hWnd, IDC_EDIT_PROVID, "000000",  662, y,  62, 22, 0);
-        y += 30;
+        CreateLabel(hWnd, "HOST",    xL1, y+4, lw, 16);
+        CreateEdit (hWnd, IDC_EDIT_HOST,  "127.0.0.1", xF1, y, fw, rh, 0);
+        CreateLabel(hWnd, "PORT",    xL2, y+4, sw, 16);
+        CreateEdit (hWnd, IDC_EDIT_PORT,  "15050",     xF2, y, sw, rh, 0);
+        CreateLabel(hWnd, "CAID",    xL3, y+4, nw, 16);
+        CreateEdit (hWnd, IDC_EDIT_CAID,  "0B00",      xF3, y, nw, rh, 0);
+        y += rs;
 
-        CreateLabel(hWnd, "Master Key:", 8, y+3, 150, 18);
-        CreateEdit(hWnd, IDC_EDIT_MASTERKEY,
-                   "9F3C17A2B5D0481E6A7B92F4C8E05D13A1B9E4F276C3058D4ACF19B08273DE5F",
-                   162, y, 468, 22, 0);
+        CreateLabel(hWnd, "USER",    xL1, y+4, lw, 16);
+        CreateEdit (hWnd, IDC_EDIT_USER,  "tvcas",     xF1, y, fw, rh, 0);
+        CreateLabel(hWnd, "PASS",    xL2, y+4, sw, 16);
+        CreateEdit (hWnd, IDC_EDIT_PASS,  "1234",      xF2, y, sw, rh, 0);
+        CreateLabel(hWnd, "SID",     xL3, y+4, nw, 16);
+        CreateEdit (hWnd, IDC_EDIT_SID,   "0001",      xF3, y, nw, rh, 0);
+        y += rs;
+
+        CreateLabel(hWnd, "DES KEY", xL1, y+4, lw, 16);
+        CreateEdit (hWnd, IDC_EDIT_DESKEY,"0102030405060708091011121314", xF1, y, fw, rh, 0);
         g_hwnd_chk_tvcas4 = CreateWindowA("BUTTON", "TVCAS4",
                    WS_VISIBLE|WS_CHILD|BS_AUTOCHECKBOX,
-                   636, y+2, 80, 18, hWnd, (HMENU)(UINT_PTR)IDC_CHK_TVCAS4, g_hInst, NULL);
+                   xL2, y+4, sw + 4 + sw, 16,
+                   hWnd, (HMENU)(UINT_PTR)IDC_CHK_TVCAS4, g_hInst, NULL);
         SendMessageA(g_hwnd_chk_tvcas4, WM_SETFONT,
                      (WPARAM)GetStockObject(DEFAULT_GUI_FONT), TRUE);
-        y += 30;
+        CreateLabel(hWnd, "PROVID",  xL3, y+4, nw, 16);
+        CreateEdit (hWnd, IDC_EDIT_PROVID,"000000",    xF3, y, nw, rh, 0);
+        y += rs;
 
-        CreateBtn(hWnd, IDC_BTN_RUN,   "Run Test",  8,   y, 90, 26);
-        CreateBtn(hWnd, IDC_BTN_STOP,  "Stop",      106, y, 72, 26);
-        CreateBtn(hWnd, IDC_BTN_CLEAR, "Clear Log", 186, y, 82, 26);
+        int mk_w = xF2 + sw - xF1;
+        CreateLabel(hWnd, "MASTER KEY", xL1, y+4, lw, 16);
+        CreateEdit (hWnd, IDC_EDIT_MASTERKEY,
+                    "9F3C17A2B5D0481E6A7B92F4C8E05D13A1B9E4F276C3058D4ACF19B08273DE5F",
+                    xF1, y, mk_w, rh, 0);
+        CreateLabel(hWnd, "INTERVAL", xL3, y+4, nw, 16);
+        CreateEdit (hWnd, IDC_EDIT_INTERVAL, "10",     xF3, y, nw, rh, 0);
+
+        y += rs + 6;
+
+        CreateBtn(hWnd, IDC_BTN_RUN,   "Run Test",  x0,      y, 90, 26);
+        CreateBtn(hWnd, IDC_BTN_STOP,  "Stop",      x0+98,   y, 72, 26);
+        CreateBtn(hWnd, IDC_BTN_CLEAR, "Clear Log", x0+178,  y, 82, 26);
         y += 34;
 
         g_hLog = CreateWindowA("EDIT", "",
@@ -1331,6 +1354,14 @@ static void on_clear_clicked(GtkButton *btn, gpointer user_data) {
     gtk_text_buffer_set_text(g_log_buf, "", 0);
 }
 
+static gboolean on_delete_event(GtkWidget *widget, GdkEvent *event, gpointer data)
+{
+    (void)widget; (void)event; (void)data;
+    g_stop_flag = 1;
+    gtk_save_conf();
+    return FALSE;
+}
+
 static GtkWidget *make_entry(const char *def, int chars) {
     GtkWidget *e = gtk_entry_new();
     gtk_entry_set_text(GTK_ENTRY(e), def);
@@ -1381,7 +1412,8 @@ int main(int argc, char *argv[]) {
     gtk_window_set_title(GTK_WINDOW(g_window), "TVCAS Newcamd Fake Stream (TNFS)");
     gtk_window_set_default_size(GTK_WINDOW(g_window), 860, 520);
     gtk_window_set_resizable(GTK_WINDOW(g_window), TRUE);
-    g_signal_connect(g_window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
+    g_signal_connect(g_window, "destroy",      G_CALLBACK(gtk_main_quit),    NULL);
+    g_signal_connect(g_window, "delete-event", G_CALLBACK(on_delete_event),  NULL);
 
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     gtk_container_set_border_width(GTK_CONTAINER(vbox), 8);
@@ -1392,44 +1424,48 @@ int main(int argc, char *argv[]) {
     gtk_grid_set_row_spacing(GTK_GRID(grid), 4);
     gtk_box_pack_start(GTK_BOX(vbox), grid, FALSE, FALSE, 0);
 
-    g_entry_host     = make_entry("127.0.0.1", 16);
-    g_entry_port     = make_entry("15050",      6);
-    g_entry_user     = make_entry("tvcas",      9);
-    g_entry_pass     = make_entry("1234",       9);
-    g_entry_interval = make_entry("10",          4);
+    g_entry_host     = make_entry("127.0.0.1", 30);
+    g_entry_port     = make_entry("15050",     12);
+    g_entry_user     = make_entry("tvcas",     30);
+    g_entry_pass     = make_entry("1234",      12);
+    g_entry_interval = make_entry("10",         6);
+    g_entry_deskey   = make_entry("0102030405060708091011121314", 30);
+    g_entry_caid     = make_entry("0B00",   7);
+    g_entry_sid      = make_entry("0001",   7);
+    g_entry_provid   = make_entry("000000", 7);
 
-    gtk_grid_attach(GTK_GRID(grid), make_label("Host:"),        0, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), g_entry_host,               1, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), make_label("Port:"),        2, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), g_entry_port,               3, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), make_label("User:"),        4, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), g_entry_user,               5, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), make_label("Pass:"),        6, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), g_entry_pass,               7, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), make_label("Interval(s):"), 8, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), g_entry_interval,           9, 0, 1, 1);
+    gtk_widget_set_hexpand(g_entry_host,   TRUE);
+    gtk_widget_set_hexpand(g_entry_user,   TRUE);
+    gtk_widget_set_hexpand(g_entry_deskey, TRUE);
 
-    g_entry_deskey = make_entry("0102030405060708091011121314", 30);
-    g_entry_caid   = make_entry("0B00",   6);
-    g_entry_sid    = make_entry("0001",   6);
-    g_entry_provid = make_entry("000000", 8);
+    gtk_grid_attach(GTK_GRID(grid), make_label("HOST"),  0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), g_entry_host,        1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), make_label("PORT"),  2, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), g_entry_port,        3, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), make_label("CAID"),  4, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), g_entry_caid,        5, 0, 1, 1);
 
-    gtk_grid_attach(GTK_GRID(grid), make_label("DES Key (14B):"), 0, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), g_entry_deskey,               1, 1, 3, 1);
-    gtk_grid_attach(GTK_GRID(grid), make_label("CAID:"),          4, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), g_entry_caid,                 5, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), make_label("SID:"),           6, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), g_entry_sid,                  7, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), make_label("ProvID:"),        8, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), g_entry_provid,               9, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), make_label("USER"),  0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), g_entry_user,        1, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), make_label("PASS"),  2, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), g_entry_pass,        3, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), make_label("SID"),   4, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), g_entry_sid,         5, 1, 1, 1);
+
+    gtk_grid_attach(GTK_GRID(grid), make_label("DES KEY"), 0, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), g_entry_deskey,        1, 2, 1, 1);
+    g_chk_tvcas4 = gtk_check_button_new();
+    gtk_grid_attach(GTK_GRID(grid), g_chk_tvcas4,          2, 2, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), make_label("PROVID"),  4, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), g_entry_provid,        5, 2, 1, 1);
 
     g_entry_masterkey = make_entry(
-        "9F3C17A2B5D0481E6A7B92F4C8E05D13A1B9E4F276C3058D4ACF19B08273DE5F", 66);
+        "9F3C17A2B5D0481E6A7B92F4C8E05D13A1B9E4F276C3058D4ACF19B08273DE5F", 46);
     gtk_widget_set_hexpand(g_entry_masterkey, TRUE);
-    g_chk_tvcas4 = gtk_check_button_new_with_label("TVCAS4");
-    gtk_grid_attach(GTK_GRID(grid), make_label("Master Key (32B):"), 0, 2, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), g_entry_masterkey,               1, 2, 8, 1);
-    gtk_grid_attach(GTK_GRID(grid), g_chk_tvcas4,                    9, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), make_label("MASTER KEY"), 0, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), g_entry_masterkey,        1, 3, 3, 1);
+    gtk_grid_attach(GTK_GRID(grid), make_label("INTERVAL"),   4, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), g_entry_interval,         5, 3, 1, 1);
 
     gtk_load_conf();
 
