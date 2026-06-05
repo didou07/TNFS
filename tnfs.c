@@ -39,7 +39,7 @@
 #define NC_MSG_MAX       1024
 #define NC_HDR_LEN_524   8
 #define CW_LEN           16
-#define CW_PRESENT_FLAG  0x10
+
 
 #define MSG_CLIENT_LOGIN     0xe0
 #define MSG_CLIENT_LOGIN_ACK 0xe1
@@ -94,14 +94,6 @@ static void tvcas_key_transform(uint8_t key[8], bool to_v4)
     uint8_t bk[8] = {0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88};
 
     if (to_v4) {
-        for (int s = 0; s < 8; s++) {
-            uint8_t carry = bk[7];
-            for (int k = 0; k < 8; k++) {
-                uint8_t next = bk[k];
-                bk[k] = (uint8_t)((bk[k] << 1) | (carry >> 7));
-                carry  = next;
-            }
-        }
         for (int i1 = 7; i1 >= 0; i1--) {
             uint8_t carry = bk[0];
             for (int k = 7; k >= 0; k--) {
@@ -109,16 +101,16 @@ static void tvcas_key_transform(uint8_t key[8], bool to_v4)
                 bk[k] = (uint8_t)((bk[k] >> 1) | (carry << 7));
                 carry  = next;
             }
+
             for (int i2 = 7; i2 >= 0; i2--) {
-                uint8_t old_k6 = key[6];
-                uint8_t t1     = TVCAS_CT[(uint8_t)(old_k6 ^ bk[i2] ^ (uint8_t)i1)];
-                uint8_t s0     = key[0];
-                key[0]         = key[7] ^ t1;
-                for (int j = 1; j < 6; j++) key[j] = key[j - 1] == key[j] ? key[j] : key[j];
-                uint8_t prev = s0;
-                for (int j = 1; j <= 5; j++) { uint8_t tmp = key[j]; key[j] = prev; prev = tmp; }
-                key[6] ^= t1;
-                key[7]  = old_k6;
+                uint8_t old_k7 = key[6];
+                uint8_t t1     = TVCAS_CT[(uint8_t)(old_k7 ^ bk[i2] ^ (uint8_t)i1)];
+                uint8_t old_k0 = key[7] ^ t1;
+                uint8_t old_k6 = key[5] ^ t1;
+                key[7] = old_k7;
+                key[6] = old_k6;
+                for (int j = 5; j >= 1; j--) key[j] = key[j - 1];
+                key[0] = old_k0;
             }
         }
     } else {
@@ -522,18 +514,23 @@ static int nc_send(NC_CLIENT *cl, const uint8_t *data, int dlen,
                    uint16_t sid, uint16_t caid, uint32_t provid)
 {
     uint8_t *buf = cl->send_buf;
-    int hdr = NC_HDR_LEN_524;
-    memset(buf, 0, hdr+4);
-    buf[2] = (uint8_t)(cl->mid >> 8);
-    buf[3] = (uint8_t)(cl->mid & 0xFF);
-    buf[4] = (uint8_t)(sid  >> 8);
-    buf[5] = (uint8_t)(sid  & 0xFF);
-    buf[6] = (uint8_t)(caid >> 8);
-    buf[7] = (uint8_t)(caid & 0xFF);
-    memcpy(buf+hdr+4, data, dlen);
-    buf[hdr+4+1] = (data[1] & 0xF0) | (((dlen-3) >> 8) & 0x0F);
-    buf[hdr+4+2] = (dlen-3) & 0xFF;
-    uint32_t blen = (uint32_t)dlen+hdr+4;
+    memset(buf, 0, 12);
+    buf[2]  = (uint8_t)(cl->mid >> 8);
+    buf[3]  = (uint8_t)(cl->mid & 0xFF);
+    buf[4]  = (uint8_t)(sid    >> 8);
+    buf[5]  = (uint8_t)(sid    & 0xFF);
+    buf[6]  = (uint8_t)(caid   >> 8);
+    buf[7]  = (uint8_t)(caid   & 0xFF);
+    buf[8]  = (uint8_t)(provid >> 16);
+    buf[9]  = (uint8_t)(provid >>  8);
+    buf[10] = (uint8_t)(provid       );
+    buf[11] = (uint8_t)(provid >> 24);
+
+    memcpy(buf+12, data, dlen);
+    buf[13] = (data[1] & 0xF0) | (((dlen-3) >> 8) & 0x0F);
+    buf[14] = (dlen-3) & 0xFF;
+
+    uint32_t blen = (uint32_t)dlen + 12;
     uint8_t pad[8];
     rand_bytes(pad, 8);
     uint32_t plen = (8-((blen-1) % 8)) % 8;
@@ -545,14 +542,13 @@ static int nc_send(NC_CLIENT *cl, const uint8_t *data, int dlen,
     rand_bytes(iv, 8);
     memcpy(buf+blen, iv, 8);
     uint8_t key16[16];
-    memcpy(key16,     cl->key1, 8);
-    memcpy(key16+8,   cl->key2, 8);
+    memcpy(key16,   cl->key1, 8);
+    memcpy(key16+8, cl->key2, 8);
     ede2_cbc_enc(key16, iv, buf+2, buf+2, blen-2);
     memset(key16, 0, 16);
     blen += 8;
     buf[0] = (uint8_t)((blen-2) >> 8);
     buf[1] = (uint8_t)((blen-2) & 0xFF);
-    (void)provid;
     return send_all(cl->fd, buf, (int)blen);
 }
 
@@ -896,12 +892,12 @@ static THREAD_RET NetworkThread(THREAD_ARG lpParam) {
 
     uint8_t login_buf[256];
     int lpos = 0;
+    size_t ulen = strlen(tp->user);
+    size_t hlen = strlen(hash);
     login_buf[lpos++] = MSG_CLIENT_LOGIN;
     login_buf[lpos++] = 0x00;
-    login_buf[lpos++] = 0x00;
-    size_t ulen = strlen(tp->user);
+    login_buf[lpos++] = (uint8_t)((ulen + 1) + (hlen + 1));
     memcpy(login_buf+lpos, tp->user, ulen+1); lpos += (int)ulen+1;
-    size_t hlen = strlen(hash);
     memcpy(login_buf+lpos, hash, hlen+1); lpos += (int)hlen+1;
 
     if (nc_send(cl, login_buf, lpos, 0x0000, 0x0000, 0) < 0) {
@@ -936,7 +932,15 @@ static THREAD_RET NetworkThread(THREAD_ARG lpParam) {
     cl->mid++;
 
     uint8_t card_req[3] = {MSG_CARD_DATA_REQ, 0, 0};
-    nc_send(cl, card_req, 3, sid, caid, provid);
+    if (nc_send(cl, card_req, 3, sid, caid, provid) < 0) {
+        AppendLog("[!] Failed to send CARD_DATA_REQ");
+        sock_close(fd); free(cl); free(tp); g_nc_client = NULL;
+#ifdef _WIN32
+        g_thread = NULL; return 1;
+#else
+        g_thread_running = false; return NULL;
+#endif
+    }
     cl->mid++;
     rlen = nc_recv(cl, resp, &r_sid, &r_mid, &r_caid);
     if (rlen >= 6 && resp[0] == MSG_CARD_DATA) {
@@ -1017,7 +1021,7 @@ static THREAD_RET NetworkThread(THREAD_ARG lpParam) {
         }
 
         if (rlen >= 3 && (resp[0] == MSG_ECM_0 || resp[0] == MSG_ECM_1)) {
-            if ((resp[2] & CW_PRESENT_FLAG) && rlen >= (int)(3+CW_LEN)) {
+            if (rlen >= (int)(3 + CW_LEN) && resp[2] == CW_LEN) {
                 AppendLog("(cw) [hit]  %04X:%04X:%02X  [%02X]  %s %s  %ldms  %s",
                     caid, sid, table_state, ecm_len,
                     hex_cw_even, hex_cw_odd, ms, tp->user);
@@ -1454,7 +1458,7 @@ int main(int argc, char *argv[]) {
 
     gtk_grid_attach(GTK_GRID(grid), make_label("DES KEY"), 0, 2, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), g_entry_deskey,        1, 2, 1, 1);
-    g_chk_tvcas4 = gtk_check_button_new();
+    g_chk_tvcas4 = gtk_check_button_new_with_label("TVCAS4 key");
     gtk_grid_attach(GTK_GRID(grid), g_chk_tvcas4,          2, 2, 2, 1);
     gtk_grid_attach(GTK_GRID(grid), make_label("PROVID"),  4, 2, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), g_entry_provid,        5, 2, 1, 1);
