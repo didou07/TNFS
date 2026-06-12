@@ -1,24 +1,22 @@
-CC_LINUX   = gcc
-CC_WIN     = x86_64-w64-mingw32-gcc
-SRC        = tnfs.c
-BIN_LINUX  = tnfs
-BIN_WIN    = tnfs.exe
+CC      = gcc
+CFLAGS  = -O2 -Wall -Wextra -Iinclude
+SRCS    = src/crypto.c src/util.c src/tvcas.c src/config.c \
+          src/ecm.c src/newcamd.c src/worker.c src/log.c src/main.c
+TARGET  = tnfs
 
-CFLAGS_LINUX = -O2 -Wall -Wextra -o $(BIN_LINUX) $(SRC) \
-               $(shell pkg-config --cflags --libs gtk+-3.0) -lpthread
+ifeq ($(OS),Windows_NT)
+    CFLAGS  += -DWIN32 -mwindows
+    LDFLAGS  = -lws2_32 -ladvapi32
+    TARGET  := $(TARGET).exe
+else
+    CFLAGS  += $(shell pkg-config --cflags gtk+-3.0)
+    LDFLAGS  = $(shell pkg-config --libs gtk+-3.0) -lpthread
+endif
 
-CFLAGS_WIN   = -O2 -Wall -Wextra -o $(BIN_WIN) $(SRC) \
-               -lws2_32 -ladvapi32 -mwindows
+all: $(TARGET)
 
-.PHONY: all linux windows clean
-
-all: linux
-
-linux:
-	$(CC_LINUX) $(CFLAGS_LINUX)
-
-windows:
-	$(CC_WIN) $(CFLAGS_WIN)
+$(TARGET): $(SRCS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 clean:
-	rm -f $(BIN_LINUX) $(BIN_WIN)
+	rm -f $(TARGET) tnfs.exe
