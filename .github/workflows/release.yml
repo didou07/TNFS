@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get install -y libgtk-3-dev
+
+      - name: Extract version
+        id: ver
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Build
+        run: make VERSION=${{ steps.ver.outputs.VERSION }}
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp tnfs dist/tnfs-linux-x86_64
+          tar -czf tnfs-linux-x86_64.tar.gz -C dist tnfs-linux-x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-build
+          path: tnfs-linux-x86_64.tar.gz
+
+  build-windows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MinGW
+        run: sudo apt-get install -y mingw-w64
+
+      - name: Extract version
+        id: ver
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Build
+        run: make CC=x86_64-w64-mingw32-gcc OS=Windows_NT VERSION=${{ steps.ver.outputs.VERSION }}
+
+      - name: Package
+        run: zip tnfs-windows-x86_64.zip tnfs.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: tnfs-windows-x86_64.zip
+
+  release:
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-build
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-build
+
+      - name: Read changelog
+        id: changelog
+        run: |
+          if [ -f CHANGELOG.md ]; then
+            NOTES=$(awk '/^## \[/{if(found) exit; found=1; next} found{print}' CHANGELOG.md)
+          else
+            NOTES="Release ${GITHUB_REF_NAME}"
+          fi
+          echo "NOTES<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: TNFS ${{ github.ref_name }}
+          body: ${{ steps.changelog.outputs.NOTES }}
+          files: |
+            tnfs-linux-x86_64.tar.gz
+            tnfs-windows-x86_64.zip
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

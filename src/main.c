@@ -2,6 +2,7 @@
 #include "config.h"
 #include "worker.h"
 #include "log.h"
+#include "version.h"
 
 #ifdef _WIN32
 
@@ -175,7 +176,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     wc.hIcon=LoadIcon(NULL,IDI_APPLICATION); wc.hCursor=LoadCursor(NULL,IDC_ARROW);
     wc.hbrBackground=(HBRUSH)(COLOR_BTNFACE+1); wc.lpszClassName="TNFSClass";
     RegisterClassExA(&wc);
-    g_hWnd = CreateWindowExA(0,"TNFSClass","TVCAS Newcamd Fake Stream (TNFS)",
+    g_hWnd = CreateWindowExA(0,"TNFSClass",APP_TITLE " (TNFS)",
         WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,760,560,NULL,NULL,hInstance,NULL);
     ShowWindow(g_hWnd,nCmdShow); UpdateWindow(g_hWnd);
     MSG msg;
@@ -280,7 +281,7 @@ int main(int argc, char *argv[]) {
     srand((unsigned)time(NULL));
 
     GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    gtk_window_set_title(GTK_WINDOW(window), "TVCAS Newcamd Fake Stream (TNFS)");
+    gtk_window_set_title(GTK_WINDOW(window), APP_TITLE " (TNFS)");
     gtk_window_set_default_size(GTK_WINDOW(window), 860, 520);
     g_signal_connect(window, "destroy",      G_CALLBACK(gtk_main_quit),   NULL);
     g_signal_connect(window, "delete-event", G_CALLBACK(on_delete_event), NULL);
