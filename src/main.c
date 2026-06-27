@@ -28,11 +28,18 @@ static HWND      g_hLog;
 static HWND      g_hwnd_chk_tvcas4;
 static HANDLE    g_thread      = NULL;
 static volatile  LONG g_worker_stop = 0;
+static volatile  LONG g_thread_running = 0;
 static worker_ctx_t  *g_worker_ctx  = NULL;
 
 static HWND make_label(HWND hWnd, const char *text, int x, int y, int w, int h) {
     return CreateWindowA("STATIC", text, WS_VISIBLE|WS_CHILD|SS_LEFT,
                          x, y, w, h, hWnd, NULL, g_hInst, NULL);
+}
+static DWORD WINAPI worker_thread_trampoline(LPVOID arg) {
+    worker_thread(arg);
+    g_worker_ctx = NULL;
+    InterlockedExchange(&g_thread_running, 0);
+    return 0;
 }
 static HWND make_edit(HWND hWnd, int id, const char *def, int x, int y, int w, int h, DWORD xs) {
     HWND he = CreateWindowA("EDIT", def, WS_VISIBLE|WS_CHILD|WS_BORDER|ES_AUTOHSCROLL|xs,
@@ -61,6 +68,7 @@ static void gui_read_conf(HWND hWnd, tnfs_conf_t *c) {
     GetWindowTextA(GetDlgItem(hWnd, IDC_EDIT_INTERVAL),  ivbuf,        sizeof(ivbuf));
     c->port     = atoi(portbuf);
     c->interval = atoi(ivbuf);
+    c->is_tvcas4 = (SendMessageA(g_hwnd_chk_tvcas4, BM_GETCHECK, 0, 0) == BST_CHECKED);
 }
 static void gui_write_conf(HWND hWnd, const tnfs_conf_t *c) {
     char portbuf[16], ivbuf[16];
@@ -76,6 +84,7 @@ static void gui_write_conf(HWND hWnd, const tnfs_conf_t *c) {
     SetWindowTextA(GetDlgItem(hWnd, IDC_EDIT_PROVID),    c->provid);
     SetWindowTextA(GetDlgItem(hWnd, IDC_EDIT_MASTERKEY), c->masterkey);
     SetWindowTextA(GetDlgItem(hWnd, IDC_EDIT_INTERVAL),  ivbuf);
+    SendMessageA(g_hwnd_chk_tvcas4, BM_SETCHECK, c->is_tvcas4 ? BST_CHECKED : BST_UNCHECKED, 0);
 }
 
 static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -128,7 +137,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
         case IDC_BTN_RUN:
-            if (g_thread) { log_append("[!] Already running -- click Stop first."); break; }
+            if (InterlockedCompareExchange(&g_thread_running, 0, 0)) { log_append("[!] Already running -- click Stop first."); break; }
             {
                 tnfs_conf_t c; gui_read_conf(hWnd, &c); conf_save(&c);
                 worker_ctx_t *ctx = (worker_ctx_t *)calloc(1, sizeof(worker_ctx_t));
@@ -144,14 +153,15 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                 ctx->params.ecm_interval_sec = c.interval;
                 ctx->params.is_tvcas4 = (SendMessageA(g_hwnd_chk_tvcas4,BM_GETCHECK,0,0)==BST_CHECKED);
                 g_worker_ctx = ctx;
-                g_thread = CreateThread(NULL, 0, worker_thread, ctx, 0, NULL);
+                InterlockedExchange(&g_thread_running, 1);
+                g_thread = CreateThread(NULL, 0, worker_thread_trampoline, ctx, 0, NULL);
             }
             break;
         case IDC_BTN_STOP:
             if (g_worker_ctx) g_worker_ctx->stop = 1;
             break;
         case IDC_BTN_CLEAR:
-            SetWindowTextA(g_hLog, "");
+            log_clear();
             break;
         }
         break;
@@ -194,7 +204,7 @@ static GtkWidget  *g_entry_deskey, *g_entry_caid, *g_entry_sid;
 static GtkWidget  *g_entry_provid, *g_entry_masterkey, *g_entry_interval;
 static GtkWidget  *g_chk_tvcas4;
 static pthread_t   g_thread;
-static bool        g_thread_running = false;
+static volatile bool g_thread_running = false;
 static worker_ctx_t *g_worker_ctx   = NULL;
 
 static GtkWidget *mk_entry(const char *def, int chars) {
@@ -221,6 +231,7 @@ static void gtk_collect_conf(tnfs_conf_t *c) {
     strncpy(c->provid,    gtk_entry_get_text(GTK_ENTRY(g_entry_provid)),    sizeof(c->provid)-1);
     strncpy(c->masterkey, gtk_entry_get_text(GTK_ENTRY(g_entry_masterkey)), sizeof(c->masterkey)-1);
     c->interval = atoi(gtk_entry_get_text(GTK_ENTRY(g_entry_interval)));
+    c->is_tvcas4 = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(g_chk_tvcas4));
 }
 static void gtk_populate_conf(const tnfs_conf_t *c) {
     char portbuf[16], ivbuf[16];
@@ -236,6 +247,14 @@ static void gtk_populate_conf(const tnfs_conf_t *c) {
     gtk_entry_set_text(GTK_ENTRY(g_entry_provid),    c->provid);
     gtk_entry_set_text(GTK_ENTRY(g_entry_masterkey), c->masterkey);
     gtk_entry_set_text(GTK_ENTRY(g_entry_interval),  ivbuf);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g_chk_tvcas4), c->is_tvcas4);
+}
+
+static void *worker_thread_trampoline(void *arg) {
+    worker_thread(arg);
+    g_thread_running = false;
+    g_worker_ctx     = NULL;
+    return NULL;
 }
 
 static void on_run_clicked(GtkButton *btn, gpointer ud) {
@@ -256,7 +275,7 @@ static void on_run_clicked(GtkButton *btn, gpointer ud) {
     ctx->params.is_tvcas4 = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(g_chk_tvcas4));
     g_worker_ctx    = ctx;
     g_thread_running = true;
-    pthread_create(&g_thread, NULL, worker_thread, ctx);
+    pthread_create(&g_thread, NULL, worker_thread_trampoline, ctx);
     pthread_detach(g_thread);
 }
 static void on_stop_clicked(GtkButton *btn, gpointer ud) {
@@ -265,9 +284,7 @@ static void on_stop_clicked(GtkButton *btn, gpointer ud) {
 }
 static void on_clear_clicked(GtkButton *btn, gpointer ud) {
     (void)btn; (void)ud;
-    GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(
-        gtk_bin_get_child(GTK_BIN(g_entry_host))));
-    (void)buf;
+    log_clear();
 }
 static gboolean on_delete_event(GtkWidget *w, GdkEvent *ev, gpointer d) {
     (void)w; (void)ev; (void)d;

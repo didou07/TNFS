@@ -1,7 +1,6 @@
 #include "newcamd.h"
 #include "crypto.h"
-#include "util.h"
-#include "tvcas.h"
+#include "worker.h"
 #include "log.h"
 
 static uint8_t nc_xor(const uint8_t *buf, int len) {
@@ -27,11 +26,7 @@ static void key_spread(const uint8_t *k14, uint8_t *s) {
     s[13] = ((k14[11] << 3) | (k14[12] >> 5)) & 0xfe;
     s[14] = ((k14[12] << 2) | (k14[13] >> 6)) & 0xfe;
     s[15] =   k14[13] << 1;
-    for (int i = 0; i < 16; i++) {
-        int par = 0;
-        for (int j = 1; j < 8; j++) par ^= (s[i] >> j) & 1;
-        s[i] = (s[i] & 0xFE) | (par ^ 1);
-    }
+    des_key_parity_adjust(s, 16);
 }
 
 int nc_send(nc_client_t *cl, const uint8_t *data, int dlen,
@@ -48,7 +43,7 @@ int nc_send(nc_client_t *cl, const uint8_t *data, int dlen,
     buf[8]  = (uint8_t)(provid >> 16);
     buf[9]  = (uint8_t)(provid >>  8);
     buf[10] = (uint8_t)(provid       );
-    buf[11] = (uint8_t)(provid >> 24);
+    buf[11] = 0x00;
     memcpy(buf + 12, data, dlen);
     buf[13] = (data[1] & 0xF0) | (((dlen-3) >> 8) & 0x0F);
     buf[14] = (dlen-3) & 0xFF;
@@ -245,5 +240,8 @@ nc_client_t *nc_connect(const nc_params_t *p,
 void nc_disconnect(nc_client_t *cl) {
     if (!cl) return;
     sock_close(cl->fd);
+    secure_zero(cl->session_key, sizeof(cl->session_key));
+    secure_zero(cl->key1, sizeof(cl->key1));
+    secure_zero(cl->key2, sizeof(cl->key2));
     free(cl);
 }

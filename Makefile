@@ -1,8 +1,8 @@
 CC      = gcc
 VERSION ?= 0.1.0
 CFLAGS  = -O2 -Wall -Wextra -Iinclude -DAPP_VERSION=\"$(VERSION)\"
-SRCS    = src/crypto.c src/util.c src/tvcas.c src/config.c \
-          src/ecm.c src/newcamd.c src/worker.c src/log.c src/main.c
+SRCS    = src/crypto.c src/config.c \
+          src/newcamd.c src/worker.c src/log.c src/main.c
 TARGET  = tnfs
 
 ifeq ($(OS),Windows_NT)

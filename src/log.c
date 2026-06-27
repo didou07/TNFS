@@ -23,6 +23,11 @@ void log_append(const char *fmt, ...) {
     SendMessageA(g_log_hwnd, EM_REPLACESEL, 0, (LPARAM)buf);
 }
 
+void log_clear(void) {
+    if (!g_log_hwnd) return;
+    SetWindowTextA(g_log_hwnd, "");
+}
+
 #else
 
 #include <gtk/gtk.h>
@@ -66,6 +71,11 @@ void log_append(const char *fmt, ...) {
     lm->text = strdup(full);
     if (!lm->text) { free(lm); return; }
     g_idle_add(log_idle, lm);
+}
+
+void log_clear(void) {
+    if (!g_log_buf) return;
+    gtk_text_buffer_set_text(g_log_buf, "", -1);
 }
 
 #endif

@@ -14,6 +14,7 @@ typedef struct {
     char provid[16];
     char masterkey[128];
     int  interval;
+    int  is_tvcas4;
 } tnfs_conf_t;
 
 void conf_defaults(tnfs_conf_t *c);

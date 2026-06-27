@@ -81,6 +81,13 @@ static void des_block(const uint8_t *in, uint8_t *out, const uint8_t *key, bool 
     memset(sk, 0, sizeof(sk));
 }
 
+void des_key_parity_adjust(uint8_t *key, int len) {
+    for (int i = 0; i < len; i++) {
+        uint8_t p = 1;
+        for (int j = 1; j < 8; j++) if ((key[i] >> j) & 1) p = !p;
+        key[i] = (key[i] & 0xFE) | p;
+    }
+}
 void des_enc(const uint8_t *k, const uint8_t *in, uint8_t *out) { des_block(in, out, k, false); }
 void des_dec(const uint8_t *k, const uint8_t *in, uint8_t *out) { des_block(in, out, k, true);  }
 

@@ -3,6 +3,7 @@
 
 #include "platform.h"
 
+void des_key_parity_adjust(uint8_t *key, int len);
 void des_enc(const uint8_t *key, const uint8_t *in, uint8_t *out);
 void des_dec(const uint8_t *key, const uint8_t *in, uint8_t *out);
 
