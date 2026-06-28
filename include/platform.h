@@ -18,6 +18,8 @@
   #define THREAD_ARG    LPVOID
 #else
   #include <sys/socket.h>
+  #include <netinet/in.h>
+  #include <netinet/tcp.h>
   #include <netdb.h>
   #include <unistd.h>
   #include <pthread.h>
