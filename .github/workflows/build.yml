@@ -1,4 +1,4 @@
-name: Build
+name: Build & Release
 
 on:
   push:
@@ -6,21 +6,118 @@ on:
   pull_request:
     branches: [ main, master ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   linux:
+    name: Linux x86-64
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Install dependencies
-        run: sudo apt-get install -y libgtk-3-dev
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libgtk-3-dev
+
       - name: Build
         run: make
 
+      - name: Strip binary
+        run: strip tnfs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tnfs-linux
+          path: tnfs
+          retention-days: 7
+
   windows:
+    name: Windows x64
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Install MinGW
         run: sudo apt-get install -y mingw-w64
+
       - name: Build
         run: make CC=x86_64-w64-mingw32-gcc OS=Windows_NT
+
+      - name: Strip binary
+        run: x86_64-w64-mingw32-strip tnfs.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tnfs-windows
+          path: tnfs.exe
+          retention-days: 7
+
+  release:
+    name: Tag & Publish Release
+    runs-on: ubuntu-latest
+    needs: [ linux, windows ]
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: ver
+        run: |
+          V=$(cat VERSION)
+          [ -n "$V" ] || { echo "ERROR: VERSION file is empty"; exit 1; }
+          echo "version=${V}" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if tag already exists
+        id: check
+        run: |
+          TAG="v${{ steps.ver.outputs.version }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1 || git ls-remote --tags origin | grep -q "refs/tags/$TAG$"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create tag
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          TAG="v${{ steps.ver.outputs.version }}"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+
+      - uses: actions/download-artifact@v4
+        if: steps.check.outputs.exists == 'false'
+        with:
+          name: tnfs-linux
+          path: dist/
+
+      - uses: actions/download-artifact@v4
+        if: steps.check.outputs.exists == 'false'
+        with:
+          name: tnfs-windows
+          path: dist/
+
+      - name: Rename artifacts
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          mv dist/tnfs     dist/tnfs-linux-x86_64
+          mv dist/tnfs.exe dist/tnfs-windows-x86_64.exe
+
+      - name: Create Release
+        if: steps.check.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: TNFS v${{ steps.ver.outputs.version }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            dist/tnfs-linux-x86_64
+            dist/tnfs-windows-x86_64.exe

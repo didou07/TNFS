@@ -2,7 +2,7 @@
 #define VERSION_H
 
 #ifndef APP_VERSION
-#define APP_VERSION "0.0.0"
+#error "APP_VERSION must be defined by the build system from the VERSION file"
 #endif
 
 #define APP_NAME    "TVCAS Newcamd Fake Stream"

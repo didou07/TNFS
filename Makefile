@@ -1,5 +1,5 @@
 CC      = gcc
-VERSION ?= 0.1.0
+VERSION ?= $(shell cat VERSION 2>/dev/null || echo 0.0.0)
 CFLAGS  = -O2 -Wall -Wextra -Iinclude -DAPP_VERSION=\"$(VERSION)\"
 SRCS    = src/crypto.c src/config.c \
           src/newcamd.c src/worker.c src/log.c src/main.c

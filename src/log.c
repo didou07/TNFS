@@ -1,4 +1,5 @@
 #include "log.h"
+#include "worker.h"
 
 #ifdef _WIN32
 
