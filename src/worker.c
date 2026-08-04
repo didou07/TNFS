@@ -189,41 +189,65 @@ sock_t connect_server(const char *host, int port) {
     return fd;
 }
 
-/* ── ECM build ── */
+static uint32_t parse_timestamp(const char *s) {
+    if (!s || s[0] == '\0') return (uint32_t)time(NULL);
+    return (uint32_t)strtoul(s, NULL, 10);
+}
+
+static uint32_t parse_ac(const char *s) {
+    if (!s || s[0] == '\0') return 0;
+    const char *p = s;
+    if (p[0]=='0' && (p[1]=='x'||p[1]=='X')) p += 2;
+    return (uint32_t)strtoul(p, NULL, 16);
+}
 
 void ecm_build(uint8_t *ecm_buf, int *ecm_len,
                const uint8_t *cw_even8,
                const uint8_t *cw_odd8,
                uint8_t table_id,
-               const uint8_t *master_key32)
+               const uint8_t *master_key32,
+               const char    *ts_str,
+               const char    *ac_str)
 {
     uint8_t plain[48];
-    memset(plain, 0, 48);
-    uint32_t ts = (uint32_t)time(NULL);
+    uint32_t ts = parse_timestamp(ts_str);
     plain[0] = (ts >> 24) & 0xFF;
     plain[1] = (ts >> 16) & 0xFF;
     plain[2] = (ts >>  8) & 0xFF;
     plain[3] =  ts        & 0xFF;
     memcpy(plain +  4, cw_odd8,  8);
     memcpy(plain + 12, cw_even8, 8);
+
+    uint32_t ac = parse_ac(ac_str);
+    plain[20] = (ac >> 24) & 0xFF;
+    plain[21] = (ac >> 16) & 0xFF;
+    plain[22] = (ac >>  8) & 0xFF;
+    plain[23] =  ac        & 0xFF;
+
+    rand_bytes(plain + 24, 23);
+
     uint8_t ck = 0;
     for (int i = 0; i < 47; i++) ck += plain[i];
     plain[47] = ck;
+
     uint8_t key16[16];
-    uint8_t key_idx = table_id & 3;
+    uint8_t key_idx = table_id & 1;
     memcpy(key16, master_key32 + key_idx * 16, 16);
     uint8_t enc[48];
     memcpy(enc, plain, 48);
     ede2_ecb_enc(key16, enc, 48);
     secure_zero(key16, 16);
-    ecm_buf[0] = table_id;
-    ecm_buf[1] = 0x70;
-    ecm_buf[2] = 2 + 2 + 48;
-    ecm_buf[3] = 0x70;
-    ecm_buf[4] = 2 + 48;
-    ecm_buf[5] = 0x64;
-    ecm_buf[6] = 0x21;
-    memcpy(ecm_buf + 7, enc, 48);
+    secure_zero(plain, 48);
+
+    uint8_t *p = ecm_buf;
+    p[0] = table_id;
+    p[1] = 0x70;
+    p[2] = 2 + 2 + 48;
+    p[3] = 0x70;
+    p[4] = 2 + 48;
+    p[5] = 0x64;
+    p[6] = 0x21;
+    memcpy(p + 7, enc, 48);
     *ecm_len = 7 + 48;
 }
 
@@ -260,7 +284,8 @@ THREAD_RET worker_thread(THREAD_ARG arg) {
         int el = 0; uint16_t ws, wm, wc;
         rand_bytes(ncw, 8);
         memcpy(cw_e, ncw, 8); memset(cw_o, 0, 8);
-        ecm_build(ep, &el, cw_e, cw_o, MSG_ECM_0, master_key);
+        ecm_build(ep, &el, cw_e, cw_o, MSG_ECM_0, master_key,
+                  p->timestamp, p->access_criteria);
         if (nc_send(cl, ep, el, sid, caid, provid) >= 0) {
             cl->mid++;
             nc_recv(cl, wr, &ws, &wm, &wc);
@@ -293,7 +318,8 @@ THREAD_RET worker_thread(THREAD_ARG arg) {
 
         uint8_t ecm_payload[128];
         int     ecm_len = 0;
-        ecm_build(ecm_payload, &ecm_len, cw_even, cw_odd, table_state, master_key);
+        ecm_build(ecm_payload, &ecm_len, cw_even, cw_odd, table_state, master_key,
+                  p->timestamp, p->access_criteria);
         secure_zero(cw_even, 8); secure_zero(cw_odd, 8); secure_zero(new_cw, 8);
 
         struct timeval t0, t1;

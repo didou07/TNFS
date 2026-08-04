@@ -38,6 +38,8 @@ typedef struct {
     char     masterkey[128];
     int      ecm_interval_sec;
     bool     is_tvcas4;
+    char     timestamp[24];
+    char     access_criteria[64];
 } nc_params_t;
 
 nc_client_t *nc_connect(const nc_params_t *p,

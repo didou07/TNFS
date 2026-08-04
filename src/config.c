@@ -23,6 +23,8 @@ void conf_defaults(tnfs_conf_t *c) {
             sizeof(c->masterkey));
     c->interval = 10;
     c->is_tvcas4 = 0;
+    c->timestamp[0]       = '\0';
+    c->access_criteria[0] = '\0';
 }
 
 void conf_load(tnfs_conf_t *c) {
@@ -42,8 +44,10 @@ void conf_load(tnfs_conf_t *c) {
         else if (!strcmp(key,"sid"))       { SET(sid); }
         else if (!strcmp(key,"provid"))    { SET(provid); }
         else if (!strcmp(key,"masterkey")) { SET(masterkey); }
-        else if (!strcmp(key,"interval"))    c->interval = atoi(val);
-        else if (!strcmp(key,"is_tvcas4"))  c->is_tvcas4 = atoi(val);
+        else if (!strcmp(key,"interval"))         c->interval  = atoi(val);
+        else if (!strcmp(key,"is_tvcas4"))        c->is_tvcas4 = atoi(val);
+        else if (!strcmp(key,"timestamp"))       { SET(timestamp); }
+        else if (!strcmp(key,"access_criteria")) { SET(access_criteria); }
 #undef SET
     }
     fclose(f);
@@ -61,7 +65,9 @@ void conf_save(const tnfs_conf_t *c) {
     fprintf(f, "sid       = %s\n", c->sid);
     fprintf(f, "provid    = %s\n", c->provid);
     fprintf(f, "masterkey = %s\n", c->masterkey);
-    fprintf(f, "interval  = %d\n", c->interval);
-    fprintf(f, "is_tvcas4 = %d\n", c->is_tvcas4);
+    fprintf(f, "interval         = %d\n",  c->interval);
+    fprintf(f, "is_tvcas4        = %d\n",  c->is_tvcas4);
+    fprintf(f, "timestamp        = %s\n",  c->timestamp);
+    fprintf(f, "access_criteria  = %s\n",  c->access_criteria);
     fclose(f);
 }

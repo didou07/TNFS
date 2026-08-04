@@ -11,6 +11,10 @@ typedef struct {
 
 THREAD_RET worker_thread(THREAD_ARG arg);
 
+void     ecm_build(uint8_t *ecm_buf, int *ecm_len,
+                   const uint8_t *cw_even8, const uint8_t *cw_odd8,
+                   uint8_t table_id, const uint8_t *master_key32,
+                   const char *ts_str, const char *ac_str);
 void     rand_bytes(uint8_t *buf, size_t n);
 void     get_timestamp(char *buf, size_t sz);
 long     get_ms_diff(struct timeval *t0, struct timeval *t1);

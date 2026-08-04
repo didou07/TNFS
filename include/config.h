@@ -15,6 +15,8 @@ typedef struct {
     char masterkey[128];
     int  interval;
     int  is_tvcas4;
+    char timestamp[24];
+    char access_criteria[64];
 } tnfs_conf_t;
 
 void conf_defaults(tnfs_conf_t *c);
